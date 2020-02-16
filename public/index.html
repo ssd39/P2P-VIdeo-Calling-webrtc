@@ -1,0 +1,263 @@
+<html>
+
+<head>
+    <title>
+        Hello RTC
+    </title>
+    <script src="https://webrtc.github.io/adapter/adapter-latest.js"></script>
+    <script>
+        let remotePeerConnection;
+        let localStream;
+        let sendDataLoop;
+        let audioid;
+        let videoid;
+        let ws;
+        const dataChannelOptions = { ordered: true };
+        const offerOptions = {
+            offerToReceiveAudio: 1,
+            offerToReceiveVideo: 1
+        };
+        var enumerateDevices;
+        var localVideo;
+        var remoteVideo;
+        function gotRemoteStream(e) {
+            console.log("at got stream")
+            if (remoteVideo.srcObject !== e.streams[0]) {
+                remoteVideo.srcObject = e.streams[0];
+                console.log('Received remote stream');
+            }
+        }
+
+        function init() {
+            createPeerConnection();
+            ws = new WebSocket("wss://webrtcsignalingob.herokuapp.com/");
+
+            ws.onopen = function () {
+                ws.send("init");
+
+            };
+
+            ws.onmessage = function (evt) {
+                var received_msg = JSON.parse(evt.data);
+
+                if (received_msg.type == "setoffer") {
+                    setOffer(received_msg.data);
+                }
+                if (received_msg.type == "setanswer") {
+                    setAnswer(received_msg.data);
+                }
+                if (received_msg.type == "ice") {
+                    setice(received_msg.data);
+                }
+            };
+
+            ws.onclose = function () {
+
+                // websocket is closed.
+                alert("Connection is closed...");
+            };
+        }
+
+        function createPeerConnection() {
+            var servers = {
+                iceServers: [
+                    { urls: 'stun:stun.l.google.com:19302' }
+                ]
+            }
+            /*
+            window.localPeerConnection = localPeerConnection = new RTCPeerConnection(servers);
+            sendChannel = localPeerConnection.createDataChannel('sendDataChannel', dataChannelOptions);
+            sendChannel.onopen = onSendChannelStateChange;
+            sendChannel.onclose = onSendChannelStateChange;
+            sendChannel.onerror = onSendChannelStateChange;*/
+
+
+            window.remotePeerConnection = remotePeerConnection = new RTCPeerConnection(servers);
+            console.log('Created remote peer connection object remotePeerConnection');
+            remotePeerConnection.onicecandidate = e => onIceCandidate(remotePeerConnection, e);
+            remotePeerConnection.ontrack = gotRemoteStream;
+            //remotePeerConnection.ondatachannel = receiveChannelCallback;
+            localStream.getTracks()
+                .forEach(track => remotePeerConnection.addTrack(track, localStream));
+
+        }
+        function onIceCandidate(pc, event) {
+            if (event.candidate != null) {
+                console.log("ice candidate:", event.candidate)
+                let enc = window.btoa(JSON.stringify(event.candidate));
+                let sov = JSON.stringify({ type: "ice", data: enc });
+                ws.send(sov);
+            }
+
+
+        }
+        async function setice(sdp) {
+            console.log("set ice init")
+            try {
+                // eslint-disable-next-line no-unused-vars
+                sdp = window.atob(sdp);
+                await remotePeerConnection.addIceCandidate(new RTCIceCandidate(JSON.parse(sdp)));
+                console.log("set ice finish")
+            } catch (e) {
+                console.log("ice candidate error:", e);
+            }
+
+        }
+
+
+        async function createOffer() {
+            console.log("init create offer")
+            try {
+                var offer = await remotePeerConnection.createOffer(offerOptions);
+                //http server
+                remotePeerConnection.setLocalDescription(offer).then(function () {
+                    let enc = window.btoa(JSON.stringify(offer));
+                    let sov = JSON.stringify({ type: "setoffer", data: enc });
+
+                    ws.send(sov);
+                    console.log("offer sent");
+                });
+
+            } catch (e) {
+                onCreateSessionDescriptionError(e);
+            }
+        }
+
+        async function setOffer(sdp) {
+            console.log("set sdp init");
+
+            sdp = window.atob(sdp);
+
+            try {
+                // eslint-disable-next-line no-unused-vars
+                const ignore = await remotePeerConnection.setRemoteDescription(new RTCSessionDescription(JSON.parse(sdp)));
+                console.log("set sdp complete")
+                onSetSessionDescriptionSuccess();
+            } catch (e) {
+                onSetSessionDescriptionError(e);
+            }
+        }
+
+        async function createAnswer() {
+            // Since the 'remote' side has no media stream we need
+            // to pass in the right constraints in order for it to
+            // accept the incoming offer of audio and video.
+            console.log("init create answer")
+            try {
+                var answer = await remotePeerConnection.createAnswer();
+                remotePeerConnection.setLocalDescription(answer).then(function () {
+
+                    //sendws
+                    let enc = window.btoa(JSON.stringify(answer));
+                    let sov = JSON.stringify({ type: "setanswer", data: enc });
+
+                    ws.send(sov);
+                    console.log("create asnwer complete")
+                });
+
+            } catch (e) {
+                onCreateSessionDescriptionError(e);
+            }
+        }
+
+        async function setAnswer(sdp) {
+            console.log("set answer init")
+            sdp = window.atob(sdp);
+
+            try {
+                // eslint-disable-next-line no-unused-vars
+                const ignore = await remotePeerConnection.setRemoteDescription(new RTCSessionDescription(JSON.parse(sdp)));
+                console.log("set answer  complete")
+                onSetSessionDescriptionSuccess();
+            } catch (e) {
+                onSetSessionDescriptionError(e);
+            }
+        }
+
+
+
+        function onSendChannelStateChange() {
+            const readyState = sendChannel.readyState;
+            console.log(`Send channel state is: ${readyState}`);
+            if (readyState === 'open') {
+                sendDataLoop = setInterval(sendData, 1000);
+            } else {
+                clearInterval(sendDataLoop);
+            }
+        }
+
+        function onSetSessionDescriptionSuccess() {
+            console.log('Set session description success.');
+        }
+
+        function onSetSessionDescriptionError(error) {
+            console.log(`Failed to set session description: ${error.toString()}`);
+        }
+        function onCreateSessionDescriptionError(error) {
+            console.log(`Failed to create session description: ${error.toString()}`);
+        }
+
+        async function getMedia() {
+            localVideo = document.getElementById("local_video");
+            remoteVideo = document.getElementById("remote_video");
+            enumerateDevices = await navigator.mediaDevices.enumerateDevices();
+            gotSources();
+            const constraints = {
+                audio: {
+                    optional: [{
+                        sourceId: audioid
+                    }]
+                },
+                video: {
+                    optional: [{
+                        sourceId: videoid
+                    }]
+                }
+            };
+            console.log('Requested local stream');
+            try {
+                const userMedia = await navigator.mediaDevices.getUserMedia(constraints);
+                gotStream(userMedia);
+            } catch (e) {
+                console.log('navigator.getUserMedia error: ', e);
+            }
+        }
+
+        function gotStream(stream) {
+            console.log('Received local stream');
+            localVideo.srcObject = stream;
+            localStream = stream;
+        }
+
+
+        function gotSources() {
+
+            let toSelectaudio = true;
+            let toSelectvideo = true;
+            for (let i = 0; i < enumerateDevices.length; i++) {
+
+                if (toSelectaudio && enumerateDevices[i].kind === 'audioinput') {
+                    audioid = enumerateDevices[i].deviceId;
+                    toSelectaudio = false;
+                } else if (toSelectvideo && enumerateDevices[i].kind === 'videoinput') {
+                    videoid = enumerateDevices[i].deviceId;
+                    toSelectvideo = false;
+                } else {
+                    console.log('unknown', JSON.stringify(enumerateDevices[i]));
+                }
+            }
+        }
+    </script>
+</head>
+
+<body>
+
+    <button onclick="getMedia()">Get media</button><br>
+    <button onclick="init()">Init</button><br>
+    <button onclick="createOffer()">createOffer</button><br>
+    <button onclick="createAnswer()">createAnswer</button><br>
+    <video id="local_video" autoplay muted></video>&nbsp;&nbsp;
+    <video id="remote_video" autoplay></video>
+</body>
+
+</html>

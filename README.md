@@ -6,3 +6,5 @@ To test project:
 3) npm install
 4) npm start or node index.js
 
+This project is live on:
+https://webrtcsignalingob.herokuapp.com/

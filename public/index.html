@@ -30,7 +30,7 @@
 
         function init() {
             createPeerConnection();
-            ws = new WebSocket("wss://webrtcsignalingob.herokuapp.com/");
+            ws = new WebSocket("ws://127.0.0.1:3000/");
 
             ws.onopen = function () {
                 ws.send("init");
